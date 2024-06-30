@@ -101,6 +101,13 @@ be referenced by handle, as well.
 Every hierarchy has its own **authorization value** which is basically a
 password. We will dive into authorization later.
 
+A note on terminology. The TPM supports both symmetric encryption (such as AES), and
+assymetric (or public-key) encryption (like RSA). Somewhat confusingly, in both cases
+the TPM refers to the key material simply as "key". Even when, as with RSA,
+it would more correct to use the term key-*pair*. For example, `tpm2_createprimary`
+is described as the command for creating a "Primary Key", but by default, this command
+actually creates an RSA key-pair. Keep this mind as you read on.
+
 ### Primary Objects
 
 Under a hierarchy, one can create one or more primary objects. These objects do
@@ -134,14 +141,14 @@ objects requires specific *attributes* which will be covered shortly.
 
 {% highlight bash %}
 # Create parent key
-tpm2_create -C primary.ctx -a 'restricted|decrypt|fixedtpm|fixedparent|sensitivedataorigin|userwithauth' -c parent.ctx
+tpm2_create -C primary.ctx -a 'fixedtpm|fixedparent|sensitivedataorigin|userwithauth|restricted|decrypt' -c parent.ctx
 
 # Create child key
 tpm2_create -C parent.ctx -c child.ctx
 {% endhighlight %}
 
 We can also create data objects. Again, they are encrypted (i.e. *sealed*) by
-its parent object. We can specify either a file (`-i <file>`) or reading from
+the parent object. We can specify either a file (`-i <file>`) or reading from
 [stdin] (`-i-`). Note that data objects are indeed a part of the hierarchy they
 were created in.
 
@@ -153,7 +160,7 @@ echo "my sealed data" | tpm2_create -C parent.ctx -i- -c data.ctx
 To recover this data we use `tpm2_unseal`.
 
 {% highlight bash %}
-# Create sealed data blob
+# # Unseal data blob (i.e decrypt using parent context) data blob
 tpm2_unseal -c data.ctx
 {% endhighlight %}
 
@@ -200,47 +207,47 @@ Additionally we see a number of attributes. The most important attributes are:
               lockout mode (see *Dictionary Attack*)
 
 Note: if the key is *restricted*, either *decrypt* or *sign* (but not both) must
-be set.
-
-//TODO what's the requirements for parent objects?
+be set. 
 
 ## Importing Keys
 
 Often, you want to import an externally generated key into the TPM. This can
-be archieved by using the `tpm2_import` command.
+be achieved by using the `tpm2_import` command.
 
 {% highlight bash %}
-# Generate key externally
+# Generate key-pair externally
 openssl genrsa -out key.pem 2048
 openssl rsa -in key.pem -pubout -out key_pub.pem
 
 # Create primary key
 tpm2_createprimary -C o -c primary.ctx
 
-# Import key
+# Import external key(-pair). Creates Primary Key encrypted public/private blobs on-disk.
 tpm2_import -G rsa -i key.pem -C primary.ctx -r import_key_priv.bin -u import_key_pub.bin
+# Load the new key(-pair) from the enecrypted blobs. We must pass in primary.ctx in order
+# to decrypt them.
 tpm2_load -C primary.ctx -r import_key_priv.bin -u import_key_pub.bin -c key.ctx
 {% endhighlight %}
 
-Alternatively, an externally generated key can be loaded without being encrypted
+Alternatively, an externally generated key(-pair) can be loaded without being encrypted
 (wrapped) by a parent key. Usually, this key is associated with the *null*
 hierarchy (`-C n`). If there is no *sensitive portion* (e.g. only a public key),
 the key can be associated with another hierarchy. However, it will never be
 wrapped by a parent key.
 
 {% highlight bash %}
-# Generate key externally
+# Generate key-pair externally
 openssl genrsa -out key.pem 2048
 openssl rsa -in key.pem -pubout -out key_pub.pem
 
-# Load the key
+# Load the key-pair directly, without wrapping.
 tpm2_loadexternal -C n -G rsa -r key.pem -c key.ctx
 {% endhighlight %}
 
 ## Signature Generation and Verification
 
-Signing using an asymmetric key is rather easy. Note however that the *sign*
-attribute of the key has to be set.
+Signing using an asymmetric key is rather easy. The *sign* attribute of the key must be set during creation.
+However, *sign* is part of the default attributes for `tpm2_create`.
 
 ### TPM only
 
@@ -282,7 +289,7 @@ tpm2_readpublic -c key.ctx -f pem -o key_pub.pem
 openssl dgst -verify key_pub.pem -sha256 -signature signature.bin plain.txt
 {% endhighlight %}
 
-Of couse we can also sign with OpenSSL and verify using the TPM. Note that in
+Of course we can also sign with OpenSSL and verify using the TPM. Note that in
 this case loading the public portion of the key into the TPM is enough for the
 signature verification. To spice things up a little bit, we use Elliptic Curve
 Cryptography (ECC) keys.
@@ -290,7 +297,7 @@ Cryptography (ECC) keys.
 Signing with OpenSSL, verifying with the TPM:
 
 {% highlight bash %}
-# Generate key externally
+# Generate key-pair externally
 openssl ecparam -name prime256v1 -genkey -out key.pem
 openssl ec -in key.pem -pubout -out key_pub.pem
 
@@ -303,10 +310,6 @@ tpm2_loadexternal -G ecc -u key_pub.pem -c key.ctx
 # Verify signature
 tpm2_verifysignature -c key.ctx -m plain.txt -g sha256 -f ecdsa -s signature.bin
 {% endhighlight %}
-
-## Encryption and Decryption
-
-// TODO
 
 ## Persistance
 
@@ -342,8 +345,6 @@ objects using the `tpm2_getcap` (get capability) tool.
 
 ## NV Space
 
-// TODO
-
 {% highlight bash %}
 # Create primary key and child key
 tpm2_nvdefine -Q  1 -C o -s 32 -a "ownerread|policywrite|ownerwrite"
@@ -359,20 +360,16 @@ tpm2_nvread -Q  1 -C o -s 32 -o 0
 
 Until now, we did not worry about authorization. Obviously we do not want our
 keys to be accessible by anyone. To protect our secrets, the TPM offers three
-kind of sessions:
+kind of authorization "sessions":
 
   * password session
   * HMAC session
   * policy session
 
-### Authorization Roles
-
-// TODO
-
 ### Password Session
 
 Password authorizations are the simplest authorizations. Every object has an
-auth. value which is by default empty. If the auth. value is specified during
+auth. value (i.e. password) which is by default empty. If the auth. value is specified during
 object creation or changed afterwards, the entity can only be used with
 authorization.
 
@@ -384,13 +381,13 @@ uppercase `-P <password>` is passed.
 
 The auth. value can be set during creation of a TPM entity or later on.
 
-Commands to set the auth. value during creation:
+Commands to set the authorization value during creation:
 
  * `tpm2_createprimary` for primary objects
  * `tpm2_create` for any other object
  * `tpm2_nvdefine` for NV indices
 
-command to set the auth. value later:
+command to set the authorization value later:
 
  * `tpm2_changeauth` for transient and persistent objects, hierarchies and NV
                      indices
@@ -405,7 +402,7 @@ tpm2_createprimary -c primary.ctx
 # Create child key with password 123456
 tpm2_create -C primary.ctx -p 123456 -c key.ctx -u key_pub.bin -p 123456
 
-# Use the key
+# Use the key to sign some data
 echo "The data to be signed" > plain.txt
 tpm2_sign -c key.ctx -o signature.bin -p 123456 plain.txt
 
@@ -425,10 +422,19 @@ tpm2_sign -c key.ctx -o signature.bin -p 000000 plain.txt
 
 // TODO
 
-The TPM's memory is quite constraint. To be able to export keys to the computers
-file system securely i.e. as an encrypted *key context*, we need the
-Access Broker and Resource Manager (ABRM). There are two notable
-implementations:
+The TPM's memory is quite constraint. To work around this, in most cases the TPM
+will not store the keys in its own memory, but instead return encrypted blobs
+of the keys when they are created, these blobs are called *key context*. Whenever
+we need to use such a key, we can send this *key context* blob the TPM,
+specifying the Parent Key which was used, and have the TPM internally decrypt it
+and load into memory for transient use. We can of course also request for certain keys
+to be stored in nvram, as shown above.
+
+To eliminate the need to manually load these context objects every time,
+we can use a  "Broker and Resource Manager" (ABRM). They are in charge
+of loading these contexts on demand, transperantly, so from the application's
+point-of-view, all the keys are always available to the TPM.
+There are two notable ABRM implementations:
 
  * The in-linux-kernel resource manager which is part of the [TPM device
    driver]. Typically, the driver provides a character device `/dev/tpmrm0`.
