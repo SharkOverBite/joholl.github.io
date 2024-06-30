@@ -141,7 +141,7 @@ tpm2_create -C parent.ctx -c child.ctx
 {% endhighlight %}
 
 We can also create data objects. Again, they are encrypted (i.e. *sealed*) by
-its parent object. We can specify either a file (`-i <file>`) or reading from
+the parent object. We can specify either a file (`-i <file>`) or reading from
 [stdin] (`-i-`). Note that data objects are indeed a part of the hierarchy they
 were created in.
 
