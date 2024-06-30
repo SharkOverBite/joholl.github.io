@@ -160,7 +160,7 @@ echo "my sealed data" | tpm2_create -C parent.ctx -i- -c data.ctx
 To recover this data we use `tpm2_unseal`.
 
 {% highlight bash %}
-# # Unseal data blob (i.e decrypt using parent context) data blob
+# Unseal data blob (i.e decrypt using parent context) data blob
 tpm2_unseal -c data.ctx
 {% endhighlight %}
 
